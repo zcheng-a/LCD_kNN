@@ -224,7 +224,7 @@ class AtomNetLip(nn.Module):
 
 # Sinkhorn algorithm
 
-def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9, bool_forloop_sparse=False, device=device):
+def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9, bool_forloop_sparse=False, device=torch.device('cpu')):
     ### cost_mat_batch should be of size n_batch * k * n_atoms
     ### one_over_eps = 1 / epsilon, note we also normalize the exponential indeces of K_batch
     ### the first entry of n_sparse imposes sparsity on transporting from empirical measure (obtained from data)
@@ -322,7 +322,7 @@ def compute_loss_sinkhorn_batch(atomnet, data_tensor, x_batch, k,               
     cost_mat_batch = torch.sum(torch.abs( (mu_hat - torch.transpose(mu_approx,1,2)) ), -1)  # shape = n_batch * k * n_atoms
 
     ## compute average of W1
-    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, n_sparse, gamma_sparse, bool_forloop_sparse=bool_forloop_sparse)
+    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, n_sparse, gamma_sparse, bool_forloop_sparse=bool_forloop_sparse, device=device)
 
     return loss
 
@@ -440,7 +440,7 @@ def compute_loss_sinkhorn_rbsp(
     cost_mat_batch = torch.sum(torch.abs( (mu_hat - torch.transpose(mu_net,1,2)) ), -1)  # shape = n_batch * k * atomnet.n_atoms
 
     ## compute average of W1
-    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, n_sparse, gamma_sparse, bool_forloop_sparse=bool_forloop_sparse)
+    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, n_sparse, gamma_sparse, bool_forloop_sparse=bool_forloop_sparse, device=device)
 
     return loss
 
