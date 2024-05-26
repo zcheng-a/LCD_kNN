@@ -224,7 +224,7 @@ class AtomNetLip(nn.Module):
 
 # Sinkhorn algorithm
 
-def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9, bool_forloop_sparse=False):
+def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9, bool_forloop_sparse=False, device=device):
     ### cost_mat_batch should be of size n_batch * k * n_atoms
     ### one_over_eps = 1 / epsilon, note we also normalize the exponential indeces of K_batch
     ### the first entry of n_sparse imposes sparsity on transporting from empirical measure (obtained from data)
