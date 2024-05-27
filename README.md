@@ -1,0 +1,1 @@
+This is supplementary code for C. Benezet, Z. Cheng, and S. Jaimungle (2024) Learning conditional distribution in continuous spaces. The plots in Section 3 can be reproduced using 'Example_1D.ipynb' and 'Example_3D.ipynb.' The remaining notebooks are used for creating the plots in Section 5.
