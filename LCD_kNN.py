@@ -1,4 +1,3 @@
-# import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,8 +45,8 @@ class LearnCondDistn_kNN():
     def set_compute_loss_param(self, k,
                                n_batch=256, n_bisect=5, n_part_batch=8,                                    ### for ANNS-RBSP, except that n_batch is for exact NNS
                                p_low=0.45, p_high=0.55, max_edge_ratio=3, ratio_skip=5,                    ### for ANNS-RBSP
-                               n_iter_skh=1, one_over_eps=1, n_sparse=[1,4], gamma_sparse=0.9,             ### for Sinkhorn
-                               nns_type='rbsp', bool_forloop_nns=False, bool_forloop_sparse=False):
+                               n_iter_skh=1, one_over_eps=1, bool_sparse=False, gamma_sparse=0.5,          ### for Sinkhorn
+                               nns_type='rbsp', bool_forloop_nns=False):
         # set parameters for training
         self.k = k
         self.n_batch = n_batch
@@ -58,12 +57,11 @@ class LearnCondDistn_kNN():
         self.max_edge_ratio = max_edge_ratio
         self.ratio_skip = ratio_skip
         self.n_iter_skh = n_iter_skh
-        self.one_over_eps = one_over_eps
-        self.n_sparse = n_sparse ### n_sparse should not have entries larger than k
+        self.one_over_eps = one_over_eps        
+        self.bool_sparse = bool_sparse
         self.gamma_sparse = gamma_sparse
         self.nns_type = nns_type
         self.bool_forloop_nns = bool_forloop_nns
-        self.bool_forloop_sparse = bool_forloop_sparse
 
     def compute_loss(self):
         if self.nns_type == 'rbsp':
@@ -71,16 +69,16 @@ class LearnCondDistn_kNN():
                 self.atomnet, self.data_tensor, self.indx_sorted_x, self.lb_x, self.ub_x, self.k,
                 n_bisect=self.n_bisect, n_part_batch=self.n_part_batch,
                 p_low=self.p_low, p_high=self.p_high, max_edge_ratio=self.max_edge_ratio, ratio_skip=self.ratio_skip,
-                n_iter_skh=self.n_iter_skh, one_over_eps=self.one_over_eps, n_sparse=self.n_sparse, gamma_sparse=self.gamma_sparse,
-                device=self.device, bool_forloop_sparse=self.bool_forloop_sparse
+                n_iter_skh=self.n_iter_skh, one_over_eps=self.one_over_eps, bool_sparse=self.bool_sparse, gamma_sparse=self.gamma_sparse,
+                device=self.device
                 )
             return ret
         else:
             x_batch = self.lb_x + (self.ub_x - self.lb_x) * torch.rand(size=(self.n_batch, self.d_X), device=self.device)
             ret = compute_loss_sinkhorn_batch(
                 self.atomnet, self.data_tensor, x_batch, self.k,
-                n_iter_skh=self.n_iter_skh, one_over_eps=self.one_over_eps, n_sparse=self.n_sparse, gamma_sparse=self.gamma_sparse,
-                device=self.device, bool_forloop_nns=self.bool_forloop_nns, bool_forloop_sparse =self.bool_forloop_sparse
+                n_iter_skh=self.n_iter_skh, one_over_eps=self.one_over_eps, bool_sparse=self.bool_sparse, gamma_sparse=self.gamma_sparse,
+                device=self.device, bool_forloop_nns=self.bool_forloop_nns
                 )
             return ret
 
@@ -224,7 +222,7 @@ class AtomNetLip(nn.Module):
 
 # Sinkhorn algorithm
 
-def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9, bool_forloop_sparse=False, device=torch.device('cpu')):
+def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, bool_sparse=False, gamma_sparse=0.5, device=torch.device('cpu')):
     ### cost_mat_batch should be of size n_batch * k * n_atoms
     ### one_over_eps = 1 / epsilon, note we also normalize the exponential indeces of K_batch
     ### the first entry of n_sparse imposes sparsity on transporting from empirical measure (obtained from data)
@@ -240,32 +238,28 @@ def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], ga
     temp_nor_const = torch.amin( torch.amax(cost_mat_batch, -1), -1).view(n_batch, 1, 1)
     K_batch = torch.exp(- one_over_eps * cost_mat_batch / temp_nor_const).detach() # may apply skew on the exponential indexes, probably not useful
 
-    # prepare for iteration: marginals
-    marg_emp_batch, marg_approx_batch = torch.ones(n_batch, k, 1).to(device) / k, torch.ones(n_batch, n_atoms, 1).to(device) / n_atoms
-    u_batch, v_batch = torch.ones(n_batch, k, 1).to(device), torch.ones(n_batch, n_atoms, 1).to(device)
+    with torch.no_grad():
+        # prepare for iteration: marginals
+        marg_emp_batch, marg_approx_batch = torch.ones(n_batch, k, 1).to(device) / k, torch.ones(n_batch, n_atoms, 1).to(device) / n_atoms
+        u_batch, v_batch = torch.ones(n_batch, k, 1).to(device), torch.ones(n_batch, n_atoms, 1).to(device)
 
-    # excecute iteration
-    for i in range(n_iter_skh):
-        u_batch = marg_emp_batch / torch.matmul(K_batch, v_batch)
-        v_batch = marg_approx_batch / torch.matmul(torch.transpose(K_batch, 1, 2), u_batch)
-    tr_plan = (u_batch * K_batch * torch.transpose(v_batch,1,2))
-    # loss_eval = torch.sum(tr_plan * cost_mat_batch).detach() / n_batch
+        # excecute iteration
+        for i in range(n_iter_skh):
+            u_batch = marg_emp_batch / torch.matmul(K_batch, v_batch)
+            v_batch = marg_approx_batch / torch.matmul(torch.transpose(K_batch, 1, 2), u_batch)
+        tr_plan = (u_batch * K_batch * torch.transpose(v_batch,1,2))
+        # loss_eval = torch.sum(tr_plan * cost_mat_batch).detach() / n_batch
 
     # impose sparsity on transport plan then compute loss
-    if bool_forloop_sparse: ### in case of out-of-memory
-        for _ in range(tr_plan.shape[0]):
-            kth_from_data = -torch.kthvalue(-tr_plan[_], n_sparse[0], dim=-2, keepdim=True)[0]
-            kth_from_net = -torch.kthvalue(-tr_plan[_], n_sparse[0], dim=-1, keepdim=True)[0]
-            tr_plan[_] = gamma_sparse * tr_plan[_] * (tr_plan[_] >= kth_from_data) + (1-gamma_sparse) * tr_plan[_] * (tr_plan[_] >= kth_from_net)
+    if bool_sparse:
+        # indx_from_net = tr_plan.sort(-1)[1]
+        # indx_from_data = tr_plan.sort(-2)[1]
+        # return torch.sum( gamma_sparse * torch.gather(cost_mat_batch, -1, indx_from_net)[:,:,-1] / n_atoms + (1-gamma_sparse) * torch.gather(cost_mat_batch, -2, indx_from_data)[:,-1,:] / k ) / n_batch
+        indx_from_net = tr_plan.sort(-1)[1][:,:,-1:]
+        indx_from_data = tr_plan.sort(-2)[1][:,-1:,:]
+        return ( gamma_sparse * torch.gather(cost_mat_batch, -1, indx_from_net).sum() / n_atoms + (1-gamma_sparse) * torch.gather(cost_mat_batch, -2, indx_from_data).sum() / k ) / n_batch
     else:
-        # topk_from_data = torch.topk(tr_plan, n_sparse[0], dim=-2)[0][:, (n_sparse[0]-1):n_sparse[0], :]
-        # topk_from_net = torch.topk(tr_plan, n_sparse[1], dim=-1)[0][:, :, (n_sparse[1]-1):n_sparse[1]]
-        kth_from_data = -torch.kthvalue(-tr_plan, n_sparse[0], dim=-2, keepdim=True)[0]
-        kth_from_net = -torch.kthvalue(-tr_plan, n_sparse[0], dim=-1, keepdim=True)[0]
-        tr_plan = gamma_sparse * tr_plan * (tr_plan >= kth_from_data) + (1-gamma_sparse) * tr_plan * (tr_plan >= kth_from_net)
-    loss = torch.sum( tr_plan * cost_mat_batch ) / n_batch
-
-    return loss
+        return torch.sum( tr_plan * cost_mat_batch ) / n_batch
 
 
 
@@ -302,9 +296,9 @@ def prepare_atoms_batch(atomnet, data_tensor, x_batch, k, weight=1, device=torch
 
 
 
-def compute_loss_sinkhorn_batch(atomnet, data_tensor, x_batch, k,                                ### basics
-                                n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9,  ### for sinkhorn
-                                device=torch.device('cpu'), bool_forloop_nns=False, bool_forloop_sparse=False):
+def compute_loss_sinkhorn_batch(atomnet, data_tensor, x_batch, k,                                                   ### basics
+                                n_iter_skh=1, one_over_eps=1, bool_sparse=False, gamma_sparse=0.9,                  ### for sinkhorn
+                                device=torch.device('cpu'), bool_forloop_nns=False):
     ### compute W1 loss between the empirical measure and the approximating measure from atomnet, using Sinkhorn iteration
     ### atomnet should be an instance of AtomNet
     ### one_over_eps = 1 / epsilon
@@ -322,7 +316,7 @@ def compute_loss_sinkhorn_batch(atomnet, data_tensor, x_batch, k,               
     cost_mat_batch = torch.sum(torch.abs( (mu_hat - torch.transpose(mu_approx,1,2)) ), -1)  # shape = n_batch * k * n_atoms
 
     ## compute average of W1
-    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, n_sparse, gamma_sparse, bool_forloop_sparse=bool_forloop_sparse, device=device)
+    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps,  bool_sparse, gamma_sparse, device=device)
 
     return loss
 
@@ -416,11 +410,11 @@ def prepare_atoms_batch_rbsp(atomnet, data_tensor, k, partition_bool, partition_
 
 
 def compute_loss_sinkhorn_rbsp(
-        atomnet, data_tensor, indx_sorted_x, lb_x, ub_x, k,              ### basics
-        n_bisect, n_part_batch=1,                                        ### for bisect_index
-        p_low=0.45, p_high=0.55, max_edge_ratio=5, ratio_skip=10,        ### for bisect_index
-        n_iter_skh=1, one_over_eps=1, n_sparse=[1,1], gamma_sparse=0.9,  ### for sinkhorn
-        device=torch.device('cpu'), bool_forloop_sparse=False
+        atomnet, data_tensor, indx_sorted_x, lb_x, ub_x, k,                 ### basics
+        n_bisect, n_part_batch=1,                                           ### for bisect_index
+        p_low=0.45, p_high=0.55, max_edge_ratio=5, ratio_skip=10,           ### for bisect_index
+        n_iter_skh=1, one_over_eps=1, bool_sparse=False, gamma_sparse=0.5,  ### for sinkhorn
+        device=torch.device('cpu')
         ):
     ### compute W1 distance between the empirical measure and the approximating measure from atomnet, using Sinkhorn iteration
     ### data preparation with rbsp, see function defined above
@@ -440,9 +434,6 @@ def compute_loss_sinkhorn_rbsp(
     cost_mat_batch = torch.sum(torch.abs( (mu_hat - torch.transpose(mu_net,1,2)) ), -1)  # shape = n_batch * k * atomnet.n_atoms
 
     ## compute average of W1
-    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, n_sparse, gamma_sparse, bool_forloop_sparse=bool_forloop_sparse, device=device)
+    loss = my_Sinkhorn(cost_mat_batch, n_iter_skh, one_over_eps, bool_sparse, gamma_sparse, device=device)
 
     return loss
-
-
-
