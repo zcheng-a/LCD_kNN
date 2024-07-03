@@ -225,8 +225,6 @@ class AtomNetLip(nn.Module):
 def my_Sinkhorn(cost_mat_batch, n_iter_skh=1, one_over_eps=1, bool_sparse=False, gamma_sparse=0.5, device=torch.device('cpu')):
     ### cost_mat_batch should be of size n_batch * k * n_atoms
     ### one_over_eps = 1 / epsilon, note we also normalize the exponential indeces of K_batch
-    ### the first entry of n_sparse imposes sparsity on transporting from empirical measure (obtained from data)
-    ### the second entry of n_sparse imposes sparsity on transporting from approximating measure (obtained from net)
     ### sparsities imposed above are applied separately, resulting in two transport plans, which will be averaged latter using gamma_sparse to form a single plan
     ### gamma_sparse being 1 means all weight is allocated to the first plan
     ### compute W1 by multiplying plan and cost, note the transport plan is detached, thus the gradient graph only goes through cost
